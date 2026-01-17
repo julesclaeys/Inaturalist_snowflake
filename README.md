@@ -140,4 +140,104 @@ ORDER BY VARIANT_COL:place_guess::string
 ;
 ```
 
- 
+ - S_Taxon
+  - Dimension containing information about species found in the park, one row per species, has information useful for further research on other levels of the taxonomy
+  - New species can be found often, updates will occur to their conservation status
+  - Daily Updates, new records added and returning species updated. 
+
+```
+-- SILVER -> Taxonomy Dimension Table 
+CREATE OR REPLACE TABLE S_Taxon as
+SELECT DISTINCT 
+VARIANT_COL:taxon:id::string as Taxon_ID
+,VARIANT_COL:taxon:name::string as Taxon_Name
+, VARIANT_COL:taxon:preferred_common_name::string as Common_Name
+, VARIANT_COL:taxon:iconic_taxon_name::string as Recognisable_Name
+, VARIANT_COL:taxon:rank_level::int as Rank_Level
+, VARIANT_COL:taxon:rank::string as Rank 
+, VARIANT_COL:taxon:threatened::boolean as is_threatened 
+, VARIANT_COL:taxon:ancestor_ids[1]::int as Kingdom_ID
+, VARIANT_COL:taxon:ancestor_ids[2]::int as Phylum_ID
+, VARIANT_COL:taxon:ancestor_ids[3]::int as Class_ID
+, VARIANT_COL:taxon:ancestor_ids[4]::int as Order_ID
+, VARIANT_COL:taxon:ancestor_ids[5]::int as Family_ID
+, VARIANT_COL:taxon:ancestor_ids[6]::int as Genus_ID
+, VARIANT_COL:taxon:complete_species_count::int as complete_species_count
+, VARIANT_COL:taxon:extinct::boolean as is_extinct
+, VARIANT_COL:taxon:conservation_status:status_name::string as conservation_status
+
+FROM TIL_DATA_ENGINEERING.JC_NATURE.B_OBSERVATIONS
+WHERE VARIANT_COL:taxon:name::string IS NOT NULL -- remove unidentified observations
+ORDER BY VARIANT_COL:taxon:name::string
+;
+```
+## Gold Layer
+
+Gold Layer consisters of queries often used by the National Park Analyst alongside a view and a table. Your goal with this section is to find the best object for each query, should it remain as a query, be in a table, for the table how would you update it, making sure these queries are also as efficient as possible. 
+
+```
+-- Gold Layer Count of Species Observed per park per day
+
+CREATE OR REPLACE VIEW G_Species_per_day_per_park_AGG as
+SELECT
+  p.place_name,
+  DATE(o.observation_timestamp) AS observation_date,
+  COUNT(DISTINCT o.taxon_id) AS species_count
+FROM TIL_DATA_ENGINEERING.JC_NATURE.S_Observations o
+JOIN LATERAL FLATTEN(input => o.place_ids) f
+JOIN TIL_DATA_ENGINEERING.JC_NATURE.S_PLACES p
+  ON f.value::STRING = p.place_id
+GROUP BY 1, 2
+ORDER BY species_count DESC;
+
+-- Frequent Query, finding observations based on conservation status per park. 
+
+SELECT
+  p.place_name,
+  t.conservation_status
+  , COUNT(*)
+FROM TIL_DATA_ENGINEERING.JC_NATURE.S_Observations o
+JOIN S_Taxon  t
+    ON o.taxon_id = t.taxon_id
+JOIN LATERAL FLATTEN(input => o.place_ids) f
+JOIN TIL_DATA_ENGINEERING.JC_NATURE.S_PLACES p
+  ON f.value::STRING = p.place_id
+  WHERE conservation_status IS NOT NULL
+  GROUP BY 1,2
+  ORDER BY COUNT(*) DESC;
+
+  -- Main users by identification quality
+CREATE OR REPLACE TABLE G_top_users AS
+SELECT 
+    u.login
+    , u.name
+    , u.orcid
+    , o.quality
+    , u.is_suspended
+    , COUNT(*) as Count
+FROM  TIL_DATA_ENGINEERING.JC_NATURE.S_Observations o
+JOIN S_USER u
+    ON o.user_id = u.user_id
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY COUNT(*) DESC;
+
+
+-- Most common species per park
+
+SELECT
+  p.place_name,
+  t.taxon_name,
+  t.common_name,
+  COUNT(*) AS observations_count
+FROM TIL_DATA_ENGINEERING.JC_NATURE.S_Observations o
+JOIN S_Taxon  t
+    ON o.taxon_id = t.taxon_id
+JOIN LATERAL FLATTEN(input => o.place_ids) f
+JOIN TIL_DATA_ENGINEERING.JC_NATURE.S_PLACES p
+  ON f.value::STRING = p.place_id
+GROUP BY 1, 2, 3
+ORDER BY observations_count DESC;
+```
+
+
+
